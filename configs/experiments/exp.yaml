@@ -1,0 +1,18 @@
+settings:
+  device: cuda:0
+  seed: 42
+logger:
+  type: terminal # wandb
+  wandb_args:
+    entity: your_wandb_entity
+    project: your_project_name
+    name: test_run
+dataset:
+  name: fashion_mnist
+  frac_train: 1.0
+  frac_tunnel: 0.05
+  frac_valid: 0.0
+dataloader:
+  num_workers: 4
+  stratified_batch: false
+  batch_size: 128

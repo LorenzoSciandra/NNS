@@ -1,0 +1,23 @@
+model:
+  type: resnet18
+  batch_norm: true
+experiment:
+  epochs: 160
+  save_every: 300
+  eval_every: 5
+  patience: 15
+optimizer:
+  lr: 0.1
+  name: SGD
+  sep_decay: false
+  weight_decay: 0.0005
+  momentum: 0.9
+scheduler:
+  decay_type: step_60_120
+  div_factor: 10
+  epochs: 150
+  final_div_factor: 1000
+  gamma: 0.2
+  max_lr: 0.01
+  patience: 30
+  warmup_epochs: 5

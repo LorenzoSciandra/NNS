@@ -1,2 +1,2 @@
 # NC-NS
-Exploiting Neural Collapse for Simplifying Deep Networks During Training
+This is the code for the paper "Exploiting Neural Collapse for Simplifying Deep Networks During Training".

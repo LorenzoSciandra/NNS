@@ -1,0 +1,11 @@
+tunnel_args:
+  alpha: 0.0
+  split_layer: 7
+  ETF_fc: true
+  enable_tunnel: true
+  declarative_ETF: false
+  inference: false
+  temperature: 5
+  bias: false
+  normalize: true
+  fixed_etf_layers: 0
