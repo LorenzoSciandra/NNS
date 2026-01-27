@@ -15,18 +15,13 @@ def make_vgg_layers(cfg: list, batch_norm: bool = False, in_channels: int = 3) -
         if v == "M":
             continue
         else:
-            # v = cast(int, v)
             conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
             if batch_norm:
-                # if ind == len(cfg) - 1:
-                #     layers += [nn.Sequential(*[conv2d, nn.BatchNorm2d(v), nn.ReLU(inplace=True), nn.MaxPool2d(kernel_size=2, stride=2)])]
                 if cfg[ind + 1] == "M":
                     layers += [nn.Sequential(*[conv2d, nn.BatchNorm2d(v), nn.ReLU(inplace=True), nn.MaxPool2d(kernel_size=2, stride=2)])]
                 else:
                     layers += [nn.Sequential(*[conv2d, nn.BatchNorm2d(v), nn.ReLU(inplace=True)])]
             else:
-                # if ind == len(cfg) - 1:
-                #     layers += [nn.Sequential(*[conv2d, nn.ReLU(inplace=True), nn.MaxPool2d(kernel_size=2, stride=2)])]
                 if cfg[ind + 1] == "M":
                     layers += [nn.Sequential(*[conv2d, nn.ReLU(inplace=True), nn.MaxPool2d(kernel_size=2, stride=2)])]
                 else:

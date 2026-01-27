@@ -13,8 +13,6 @@ from utils import scatter
 
 
 def all_means(features, targets, device='cpu'):
-
-    # compute all the class means, and the global mean
     mu_c_dict = {}
     mus = scatter(features, targets, dim=0, reduce='mean')
     K = mus.shape[0]
@@ -28,8 +26,6 @@ def all_means(features, targets, device='cpu'):
 
 
 def all_vars(features, targets, mu_c_dict, device='cpu'):
-
-    # compute all the class variances
     var_c_dict = {}
     K = len(mu_c_dict)
     
@@ -48,10 +44,6 @@ def all_vars(features, targets, mu_c_dict, device='cpu'):
 
     
 def sigma_W(features, mu_c_dict, targets, device='cpu'):
-    
-    # Compute the within-class covariance matrix Sigma_W
-    # mu_c_dict: dictionary with class means
-
     N = features.shape[0]
     d = features.shape[1]
     Sigma_W = torch.zeros((d, d), device=device)
@@ -67,11 +59,6 @@ def sigma_W(features, mu_c_dict, targets, device='cpu'):
 
 
 def sigma_B(mu_c_dict, mu_G, device='cpu'):
-    
-    # Compute the between-class covariance matrix Sigma_B
-    # mu_c_dict: dictionary with class means
-    # mu_G: global mean
-
     d = mu_G.shape[0]
     Sigma_B = torch.zeros((d, d), device=device)
     K = len(mu_c_dict)
@@ -86,7 +73,6 @@ def sigma_B(mu_c_dict, mu_G, device='cpu'):
 
 
 def global_centered_features(mu_c_dict, mu_G, device='cpu'):
-    # Center the class means around the global mean
     d = mu_G.shape[0]
     K = len(mu_c_dict)
     H_bar = torch.zeros((d, K), device=device)
@@ -131,7 +117,6 @@ def nc2_metric(weights, K):
 
 
 def nc3_metric(weights, mu_c_dict, mu_G):
-    
     K = len(mu_c_dict)
     H_bar = global_centered_features(mu_c_dict, mu_G, device=weights.device)
     M = weights @ H_bar
@@ -215,9 +200,6 @@ def inter_class_var(mu_c_dict):
 
 
 def hsic_0(M1, M2, device='cpu'):
-    """
-    Compute the Hilbert-Schmidt Independence Criterion (HSIC) between two matrices.
-    """
     n = M1.shape[0]
     H = torch.eye(n, device=device) -  1/n * torch.ones((n, n), device=device)
     K = H @ M1 @ H
@@ -229,9 +211,6 @@ def hsic_0(M1, M2, device='cpu'):
 
 
 def hsic_1(M1, M2, device='cpu'):
-    """
-    Compute the Hilbert-Schmidt Independence Criterion (HSIC) between two matrices.
-    """
     n = M1.shape[0]
     K = M1 - torch.diag(M1.mean(axis=0))
     L = M2 - torch.diag(M2.mean(axis=0))
@@ -247,9 +226,6 @@ def hsic_1(M1, M2, device='cpu'):
 
 
 def cka_similarity_0(embs1, embs2, device='cpu'):
-    """
-    Compute the CKA similarity between two sets of embeddings.
-    """
     XX = embs1 @ embs1.T
     YY = embs2 @ embs2.T
     M1 = hsic_0(XX, YY, device=device)
@@ -259,9 +235,6 @@ def cka_similarity_0(embs1, embs2, device='cpu'):
 
 
 def cka_similarity_1(embs1, embs2, device='cpu'):
-    """
-    Compute the CKA similarity between two sets of embeddings.
-    """
     XX = embs1 @ embs1.T
     YY = embs2 @ embs2.T
     M1 = hsic_1(XX, YY, device=device)
@@ -360,18 +333,6 @@ def estimate(X, fraction=0.9, verbose=False):
                     
 
 def intrinsic_dimension(embs, fraction=0.9, verbose=False, device='cpu'):
-    """
-    Estimate the intrinsic dimension of a set of embeddings.
-    
-    Args:
-        embs: Tensor of shape (n_samples, n_features) containing the embeddings.
-        fraction: Fraction of the data to consider for the dimensionality estimation (default: 0.9).
-        verbose: If True, print additional information (default: False).
-    
-    Returns:
-        Intrinsic dimension estimate.
-    """
-    # Compute pairwise distances
     dist_matrix = torch.cdist(embs, embs, p=2).cpu().numpy()
     return estimate(dist_matrix, fraction=fraction, verbose=verbose)
 
@@ -557,21 +518,17 @@ def calculate_all_nc_metrics(model, targets, device='cpu', tunnel_mode=False, ca
 
 def save_metrics(run_path, metrics, epoch):
 
-    # Create directory only if it doesn't already exist
     if not os.path.exists(run_path):
         os.makedirs(run_path)
 
-    # Path to metrics file
     metrics_file = os.path.join(run_path, "metrics.pth")
 
-    # Load existing dict if available, otherwise start fresh
     if os.path.exists(metrics_file):
         all_exp_metric = torch.load(metrics_file, weights_only=False)
     else:
         all_exp_metric = dict()
 
-    # Update metrics
     all_exp_metric[epoch] = metrics
 
-    # Save back to file
     torch.save(all_exp_metric, metrics_file)
+    

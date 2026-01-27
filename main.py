@@ -12,7 +12,6 @@ import yaml
 
 
 def init_exp(parser):
-
     parser.add_argument('-exp', dest='exp', default='configs/experiments/exp.yaml', type = str, help='Experiment configuration file')
     parser.add_argument('-trainer', dest='trainer', default='configs/trainer/resnet10.yaml', type = str, help='Experiment configuration file')
     parser.add_argument('-tunnel', dest='tunnel', default=None, type = str, help='Model configuration file')
@@ -61,10 +60,7 @@ def init_exp(parser):
     return config, args
 
 
-def run(config, args):
-    """Main function to run the experiment."""
-    
-    # Initialize logger
+def run(config, args):    
     logger = initialize_logger_from_config(config, args.checkpoint)
     logger.log(config, header="Configuration")
 
@@ -105,7 +101,6 @@ def run(config, args):
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser(description="classification")
     config, args = init_exp(parser)
     print("Starting experiment from checkpoint:", args.checkpoint)

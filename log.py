@@ -99,7 +99,6 @@ class WandbLogger(Logger):
         wandb.finish()
 
 
-# Assuming Logger and WandbLogger classes are imported here
 
 def initialize_logger_from_config(config: dict, checkpoint: bool) -> Union[Logger, WandbLogger]:
     
@@ -113,7 +112,7 @@ def initialize_logger_from_config(config: dict, checkpoint: bool) -> Union[Logge
     else:
         logs_directory = "./logs/"
     if config['lth']:
-        results_directory = f"./LTH_{config['optimizer']['name']}_checkpoints/" # The model is okay to be overwritten
+        results_directory = f"./LTH_{config['optimizer']['name']}_checkpoints/"
     else:
         results_directory = f"./{config['optimizer']['name']}_checkpoints/"
 
@@ -127,21 +126,17 @@ def initialize_logger_from_config(config: dict, checkpoint: bool) -> Union[Logge
     os.makedirs(log_metrics_directory, exist_ok=True)
     os.makedirs(results_directory, exist_ok=True)
 
-    # Generate a unique hash for the logger configuration
     config_hash = generate_config_hash(config)
     name = f"{config_hash}" + config["logger"]["wandb_args"]["name"]
 
     del config["logger"]["wandb_args"]["name"]
 
-    # Initialize either Logger or WandbLogger based on configuration
     if logger_type == "wandb":
         
-        # Gather additional Wandb arguments from config
         kwargs = {
             "config": config,
-            **(logger_config.get("wandb_args", {}))  # Merge other args
+            **(logger_config.get("wandb_args", {}))
         }
-        # Filter out any None values in kwargs
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         
         return WandbLogger(name=name, logs_directory=logs_directory, results_directory=results_directory, log_metrics_directory=log_metrics_directory, **kwargs)
