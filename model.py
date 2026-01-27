@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from nc.ddn_modules import ClosestETFGeometryLayer, FeaturesMovingAverageLayer
 from models.resnet import resnet_set
-from models.cnn import cnn_set
 from models.mlp import mlp_set
 from models.vgg import vgg_set
 from dataset import DATASET_CLASSES, DATASET_FEATURES, DATASET_NUM_CHANNELS, DATASET_FLATTEN_FEATURES
@@ -13,8 +12,6 @@ def return_layer_list(model_type:str = "resnet10", dataset:str = 'cifar10', batc
     
     if model_type.startswith('mlp'):
         return mlp_set(DATASET_CLASSES[dataset], DATASET_FEATURES[dataset], num_layers=int(model_type.split('_')[-1]))
-    elif model_type == 'cnn':
-        return cnn_set(DATASET_CLASSES[dataset], DATASET_NUM_CHANNELS[dataset], DATASET_FLATTEN_FEATURES[dataset])
     elif 'resnet' in model_type:
         return resnet_set(model_type, DATASET_CLASSES[dataset], DATASET_NUM_CHANNELS[dataset])
     elif 'vgg' in model_type:

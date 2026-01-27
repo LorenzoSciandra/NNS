@@ -1,14 +1,14 @@
 settings:
   device: cuda:0
-  seed: 42
+  seed: 2025
 logger:
   type: terminal # wandb
   wandb_args:
     entity: your_wandb_entity
     project: your_project_name
-    name: test_run
+    name: _baseline_mlp_10_cifar10_seed2025
 dataset:
-  name: fashion_mnist
+  name: cifar10
   frac_train: 1.0
   frac_tunnel: 0.05
   frac_valid: 0.0
