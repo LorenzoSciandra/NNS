@@ -116,7 +116,6 @@ def find_split_layer(nc_metrics, alpha=2.0, beta=3.0, verbose=False):
     abs_split_layer = int(abs_split_layer)
     soft_split_layer = int(soft_split_layer)
     
-    
     if verbose:
         print(f"Absolute split layer: {abs_split_layer}, Soft split layer: {soft_split_layer} for ranks: {all_ranks}")
 

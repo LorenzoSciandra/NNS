@@ -42,7 +42,7 @@ class Trainer:
         self.tunnel_args = config["tunnel_args"]
         self.epochs = self.config["experiment"]["epochs"]
         self.config["optimizer"]["declarative_ETF"] = self.tunnel_args["declarative_ETF"]
-        
+        self.save_metrics = config["settings"].get("save_metrics", False)
         self.device = config["settings"]["device"]
     
         self.train_loader, self.valid_loader, self.tunnel_loader, self.test_loader = self.dataset.return_loaders(
@@ -144,14 +144,16 @@ class Trainer:
         print(f"Representative layers: {self.representative_layers}")
         print(f"Classification layers: {self.classification_layers}")
         print(f"Moving layers: {self.moving_layers}")
-
-        if not self.tunnel_args["enable_tunnel"]:
-            abs_split_layer, soft_split_layer, curr_ranks = find_split_layer(nc_metrics)
-
-            epoch_metrics["abs_split_layer"] = abs_split_layer
-            epoch_metrics["soft_split_layer"] = soft_split_layer
         
-        # save_metrics(self.logger.log_metrics, epoch_metrics, epoch)
+        #if not self.tunnel_args["enable_tunnel"]:
+        #    abs_split_layer, soft_split_layer, curr_ranks = find_split_layer(nc_metrics)
+
+        #    epoch_metrics["abs_split_layer"] = abs_split_layer
+        #    epoch_metrics["soft_split_layer"] = soft_split_layer
+        
+        if self.save_metrics:
+            save_metrics(self.logger.log_metrics, epoch_metrics, epoch)
+        
         self.model.reset_embs()  # reset embeddings for the next epoch
 
         return epoch_metrics

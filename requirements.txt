@@ -1,0 +1,16 @@
+autograd==1.8.0
+jax==0.4.30
+numpy==2.4.1
+pandas==3.0.0
+PyYAML==5.4.1
+PyYAML==6.0.2
+PyYAML==6.0.3
+ruamel.base==1.0.0
+scikit_learn==1.8.0
+scipy==1.17.0
+tensorflow==2.20.0
+torch==2.5.1
+torch_vision==0.1.6.dev0
+torchmetrics==1.6.0
+torchvision==0.20.1
+wandb==0.24.0

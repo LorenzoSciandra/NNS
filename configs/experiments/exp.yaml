@@ -1,6 +1,7 @@
 settings:
   device: cuda:0
   seed: 2025
+  save_metrics: true
 logger:
   type: terminal # wandb
   wandb_args:
