@@ -7,6 +7,8 @@ import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from cub2011 import Cub2011
+from datasets import load_dataset
+from torch.utils.data import Dataset
 
 DATASET_CLASSES = {
     "cifar10": 10,
@@ -15,7 +17,7 @@ DATASET_CLASSES = {
     "fashion_mnist": 10,
     "svhn": 10,
     "stl10": 10,
-    "imagenet": 1000,
+    "imagenet100": 100,
     "cub": 200
 }
 
@@ -26,7 +28,7 @@ DATASET_FEATURES = {
     "fashion_mnist": 32*32,
     "svhn": 32*32*3,
     "stl10": 96*96*3,
-    "tinyimagenet": 64*64*3,
+    "imagenet100": 224*224*3,
     "cub": 224*224*3
 }
 
@@ -37,7 +39,7 @@ DATASET_IMG_SIZE = {
     "fashion_mnist": 32,
     "svhn": 32,
     "stl10": 96,
-    "tinyimagenet": 64,
+    "imagenet100": 224,
     "cub": 224
 }
 
@@ -48,7 +50,7 @@ DATASET_NUM_CHANNELS = {
     "fashion_mnist": 1,
     "svhn": 3,
     "stl10": 3,
-    "tinyimagenet": 3,
+    "imagenet100": 3,
     "cub": 3
 }
 
@@ -59,7 +61,7 @@ DATASET_NUM_EXAMPLES = {
     "fashion_mnist": 60000,
     "svhn": 73257,
     "stl10": 5000,
-    "tinyimagenet": 100000,
+    "imagenet100": 126689,
     "cub": 5994
 }
 
@@ -70,9 +72,26 @@ DATASET_FLATTEN_FEATURES = {
     "fashion_mnist": 128 * 7 * 7,
     "svhn": 128 * 8 * 8,
     "stl10": 128 * 24 * 24,
-    "tinyimagenet": 3,
+    "imagenet100": 128 * 56 * 56,
     "cub": 128 * 56 * 56
 }
+
+class HFDatasetWrapper(Dataset):
+    """Simple wrapper to make HF datasets behave like standard PyTorch datasets"""
+    def __init__(self, hf_dataset, transform=None):
+        self.dataset = hf_dataset
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+        image = item['image'].convert("RGB") # Ensure 3 channels
+        label = item['label']
+        if self.transform:
+            image = self.transform(image)
+        return image, label
 
 class ImageDataset:
     def __init__(self, data_args):
@@ -84,13 +103,14 @@ class ImageDataset:
         
         assert self.frac_train + self.frac_valid <= 1.0, "Fractions must sum to 1 or less"
         
+        # self.tunnel_set_size = data_args["tunnel_set_size"]
         self.num_classes = DATASET_CLASSES[self.name]
         self.features = DATASET_FEATURES[self.name]
         self.train_set, self.valid_set, self.tunnel_set, self.test_set = self.get_dataset()
-        self.train_targets = [self.train_set[i][1] for i in range(len(self.train_set))]
-        self.valid_targets = [self.valid_set[i][1] for i in range(len(self.valid_set))]
-        self.tunnel_targets = [self.tunnel_set[i][1] for i in range(len(self.tunnel_set))]
-        self.test_targets = [self.test_set[i][1] for i in range(len(self.test_set))]
+        # self.train_targets = [self.train_set[i][1] for i in range(len(self.train_set))]
+        # self.valid_targets = [self.valid_set[i][1] for i in range(len(self.valid_set))]
+        # self.tunnel_targets = [self.tunnel_set[i][1] for i in range(len(self.tunnel_set))]
+        # self.test_targets = [self.test_set[i][1] for i in range(len(self.test_set))]
 
     
     def __split_dataset(self, dataset, targets):
@@ -102,19 +122,25 @@ class ImageDataset:
         
         valid_indices, tunnel_indices, train_indices = [], [], []
         
-        indices = list(range(total_size))
+        indices = np.arange(total_size)
         random.shuffle(indices)
-        
         if valid_size > 0:  
             train_indices = indices[:train_size]
             valid_indices = indices[train_size:]
+            self.valid_targets = targets[valid_indices]
+            self.train_targets = targets[train_indices]
         else:
             train_indices = indices
-
+            self.valid_targets = []
+        
         if tunnel_size > 0:
-            train_targets = [targets[i] for i in train_indices]
+            
+            train_targets = targets[train_indices]
             tunnel_indices = stratified_sample(train_targets, tunnel_size)
-         
+            tunnel_indices = train_indices[tunnel_indices]
+            tunnel_targets = targets[tunnel_indices]
+            self.train_targets = train_targets
+            self.tunnel_targets = tunnel_targets
         
         train_set = Subset(dataset, train_indices)
         validation_set = Subset(dataset, valid_indices)
@@ -124,11 +150,8 @@ class ImageDataset:
     
 
     def get_dataset(self):
-        if self.name not in ['cifar10', 'cifar100', 'stl10', 'svhn', 'fashion_mnist', 'mnist', 'cub']:
+        if self.name not in ['cifar10', 'cifar100', 'stl10', 'svhn', 'fashion_mnist', 'mnist', 'cub', 'imagenet100']:
             raise AttributeError("Dataset not available")
-        
-        train_set = None
-        test_set = None
         
         if self.name=='cifar10':
             transform_train = transforms.Compose(
@@ -258,11 +281,37 @@ class ImageDataset:
             ])
             train_set = Cub2011('./data/cub2011', train=True, transform=transform_train, download=True)
             test_set = Cub2011('./data/cub2011', train=False, transform = transform_test, download=True)
-
-        if train_set is None or test_set is None:
-            raise ValueError("Failed to load dataset")
         
-        train_targets = [train_set[i][1] for i in range(len(train_set))]
+        elif self.name == 'imagenet100':
+            transform_train = transforms.Compose([
+                transforms.Resize(256),
+                transforms.RandomResizedCrop(224),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+            ])
+
+            transform_test = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+            ])
+
+            raw_ds = load_dataset("clane9/imagenet-100", cache_dir="./data/imagenet100'")
+            
+            train_data = raw_ds['train']
+            test_data = raw_ds['validation']
+
+            train_set = HFDatasetWrapper(train_data, transform=transform_train)
+            test_set = HFDatasetWrapper(test_data, transform=transform_test)
+
+        if self.name == 'imagenet100':
+            train_targets = train_data['label']
+            self.test_targets = test_data['label']
+        else:
+            # train_targets = [train_set[i][1] for i in range(len(train_set))]
+            train_targets = np.array(train_set.targets)
+            self.test_targets = np.array(test_set.targets)
+
         train_set, validation_set, tunnel_set = self.__split_dataset(train_set, train_targets)
         
         return train_set, validation_set, tunnel_set, test_set

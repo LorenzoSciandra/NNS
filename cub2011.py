@@ -40,6 +40,7 @@ class Cub2011(Dataset):
             self.data = self.data[self.data.is_training_img == 1]
         else:
             self.data = self.data[self.data.is_training_img == 0]
+        self.targets = self.data.target.values
 
     def _check_integrity(self):
         try:
