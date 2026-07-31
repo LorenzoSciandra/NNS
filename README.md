@@ -1,5 +1,27 @@
-# Neural Network Simplification
-This is the code for the paper "Simplifying Neural Networks During Training".
+
+<div align="center">
+
+# Simplifying Neural Networks During Training
+Lorenzo Sciandra, Samuele Fonio and Roberto Esposito
+
+</div>
+
+This repository contains the code to run and reproduce the experiments of the preprint [Simplifying Neural Networks During Training](https://arxiv.org/abs/2607.27854) paper, now submitted to a journal.
+
+
+Please cite as:
+
+```bibtex
+@misc{sciandra2026nns,
+      title={Simplifying Neural Networks During Training}, 
+      author={Lorenzo Sciandra and Samuele Fonio and Roberto Esposito},
+      year={2026},
+      eprint={2607.27854},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2607.27854}, 
+}
+```
 
 ## Requirements
 
