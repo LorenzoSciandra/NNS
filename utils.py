@@ -42,7 +42,7 @@ class StratifiedBatchSampler:
     def __len__(self):
         return self.n_batches
 
-def stratified_sample(y, n_samples):
+def stratified_sample(y, n_samples, rng=None):
     
     if torch.is_tensor(y):
         y = y.numpy()
@@ -66,7 +66,7 @@ def stratified_sample(y, n_samples):
         sample_weights = sample_weights / sample_weights.sum()
 
         # Step 4: Sample indices
-        indices = np.random.choice(
+        indices = (np.random if rng is None else rng).choice(
             all_indices,
             size=n_samples,
             replace=False,
@@ -269,47 +269,131 @@ def scatter(src: torch.Tensor,
 ##########################################################
 
 
-class Layer:
-    def __init__(self, layer_idx, patience=15):
+class LayerLabel:
+    """
+    Extractor/contractor label of a single layer, updated from its IFC value at every epoch.
+
+    rule:      'sign'      -> contractor iff IFC(t) <= ref                       (paper default)
+               'abs_delta' -> contractor iff IFC(t) - ref < -threshold
+               'rel_delta' -> contractor iff (IFC(t) - ref) / |ref| < -threshold
+               'abs_value' -> contractor iff IFC(t) < threshold                  (no reference)
+    reference: 'first'  -> ref = IFC after the first epoch                        (paper default)
+               'mean'   -> ref = mean IFC over the first ref_epochs epochs
+               'warmup' -> ref = IFC after epoch ref_epochs (earlier epochs are ignored)
+
+    Before the reference is available the layer is not labeled (it keeps the initial extractor label)
+    and is not `ready`. With the defaults this reproduces the original rule: the value after the first
+    epoch only sets the reference, and the layer is labeled from the second epoch on.
+    """
+    RULES = ("sign", "abs_delta", "rel_delta", "abs_value")
+    REFERENCES = ("first", "mean", "warmup")
+
+    def __init__(self, layer_idx, rule="sign", threshold=0.0, reference="first", ref_epochs=1):
+        assert rule in self.RULES, f"unknown labeling rule {rule}"
+        assert reference in self.REFERENCES, f"unknown reference {reference}"
         self.layer_idx = layer_idx
+        self.rule = rule
+        self.threshold = threshold
+        self.reference = reference
+        self.ref_epochs = 1 if reference == "first" else max(1, int(ref_epochs))
+        self.history = []
         self.starting_val = None
         self.current_val = None
         self.representative = True
-        self.moving = False
-        self.layer_patience = patience
-        self.counter = 0
         self.changed = False
-        
+        self.ready = rule == "abs_value"
 
     def set_val(self, metric):
-        if self.starting_val is None:
-            self.starting_val = metric
+        metric = float(metric)
+        self.history.append(metric)
+        if self.rule == "abs_value":
+            self.current_val = metric
+            self.classify()
+        elif self.starting_val is None:
+            if len(self.history) == self.ref_epochs:
+                self.starting_val = self.history[-1] if self.reference == "warmup" else float(np.mean(self.history))
+                self.ready = True
         else:
             self.current_val = metric
             self.classify()
 
-    def classify(self):
-        if self.current_val is not None and self.starting_val is not None:
-            if self.current_val > self.starting_val:
-                if self.representative == False:
-                    self.counter = 0
-                    self.moving = True
-                    self.changed = True
-                else:
-                    self.changed = False
-                    self.counter += 1
-                    if self.counter >= self.layer_patience:
-                        self.moving = False
+    def is_contractor(self):
+        if self.rule == "abs_value":
+            return self.current_val < self.threshold
+        delta = self.current_val - self.starting_val
+        if self.rule == "sign":
+            return not delta > 0
+        if self.rule == "abs_delta":
+            return delta < -self.threshold
+        return delta / (abs(self.starting_val) + 1e-12) < -self.threshold
 
-                self.representative = True
-            else:
-                if self.representative == True:
-                    self.counter = 0
-                    self.moving = True
-                    self.changed = True
-                else:
-                    self.changed = False
-                    self.counter += 1
-                    if self.counter >= self.layer_patience:
-                        self.moving = False
-                self.representative = False
+    def classify(self):
+        representative = not self.is_contractor()
+        self.changed = representative != self.representative
+        self.representative = representative
+
+
+class SplitDetector:
+    """
+    Online split detection of NNS. At every epoch `update` receives the IFC of every layer
+    ({layer_idx: value}); the first layer is always an extractor and the last one a contractor.
+    When no label has changed for `patience` consecutive epochs the detector fires, and the split
+    layer is the first contractor (the model keeps layers [0, split_layer)).
+    """
+    def __init__(self, patience=15, rule="sign", threshold=0.0, reference="first", ref_epochs=1):
+        self.patience = patience
+        self.label_args = dict(rule=rule, threshold=threshold, reference=reference, ref_epochs=ref_epochs)
+        self.layers = {}
+        self.num_layers = None
+        self.counter = 0
+        self.split_layer = None   # split at the first time the patience is reached
+        self.split_epoch = None
+        self.events = []          # (epoch, split layer) every time the patience is reached
+
+    def update(self, ifc, epoch=None):
+        self.num_layers = max(ifc) + 1
+        for layer_idx in sorted(ifc):
+            if layer_idx == 0 or layer_idx == self.num_layers - 1:
+                continue  # skip input and output layers
+            if layer_idx not in self.layers:
+                self.layers[layer_idx] = LayerLabel(layer_idx, **self.label_args)
+            self.layers[layer_idx].set_val(ifc[layer_idx])
+
+        if all(layer.ready and not layer.changed for layer in self.layers.values()):
+            self.counter += 1
+        else:
+            self.counter = 0
+
+        fired = self.counter == self.patience
+        if fired:
+            self.events.append((epoch, self.candidate))
+            if self.split_layer is None:
+                self.split_layer, self.split_epoch = self.candidate, epoch
+        return fired
+
+    @property
+    def extractors(self):
+        return {0} | {i for i, layer in self.layers.items() if layer.representative}
+
+    @property
+    def contractors(self):
+        return {self.num_layers - 1} | {i for i, layer in self.layers.items() if not layer.representative}
+
+    @property
+    def candidate(self):
+        return min(self.contractors)
+
+    def labels(self):
+        """{layer_idx: 1 if contractor else 0} for all layers."""
+        contractors = self.contractors
+        return {i: int(i in contractors) for i in range(self.num_layers)}
+
+
+def replay_split(ifc_per_epoch, patience=15, **label_args):
+    """Offline replay of the split detection on a recorded IFC trajectory (list of {layer_idx: ifc}, one per epoch)."""
+    detector = SplitDetector(patience=patience, **label_args)
+    labels = []
+    for epoch, ifc in enumerate(ifc_per_epoch):
+        detector.update(ifc, epoch)
+        labels.append(detector.labels())
+    return detector, labels

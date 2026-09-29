@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import Subset
 import random 
+import copy
 from utils import *
 import torch
 import torchvision
@@ -103,8 +104,18 @@ class ImageDataset:
         
         assert self.frac_train + self.frac_valid <= 1.0, "Fractions must sum to 1 or less"
         
+        # Optional settings (absent from the original configs, defaults reproduce the original behavior):
+        # - tunnel_seed: seed used only to sample the tunnel set (and train/valid split), decoupled from the
+        #   optimization seed. If None, the global RNGs seeded with settings.seed are used, as before.
+        # - num_classes: train on a subset of the classes (nested subsets, chosen by class_subset_seed).
+        # - tunnel_eval_transform: build the tunnel set with the test transform (no random augmentation).
+        self.tunnel_seed = data_args.get("tunnel_seed", None)
+        self.class_subset = data_args.get("num_classes", None)
+        self.class_subset_seed = data_args.get("class_subset_seed", 0)
+        self.tunnel_eval_transform = data_args.get("tunnel_eval_transform", False)
+
         # self.tunnel_set_size = data_args["tunnel_set_size"]
-        self.num_classes = DATASET_CLASSES[self.name]
+        self.num_classes = DATASET_CLASSES[self.name] if self.class_subset is None else int(self.class_subset)
         self.features = DATASET_FEATURES[self.name]
         self.train_set, self.valid_set, self.tunnel_set, self.test_set = self.get_dataset()
         # self.train_targets = [self.train_set[i][1] for i in range(len(self.train_set))]
@@ -113,7 +124,7 @@ class ImageDataset:
         # self.test_targets = [self.test_set[i][1] for i in range(len(self.test_set))]
 
     
-    def __split_dataset(self, dataset, targets):
+    def __split_dataset(self, dataset, targets, tunnel_source=None):
         
         total_size = len(dataset)
         valid_size = int(len(dataset) * self.frac_valid)
@@ -122,8 +133,13 @@ class ImageDataset:
         
         valid_indices, tunnel_indices, train_indices = [], [], []
         
+        if self.tunnel_seed is None:
+            py_rng, np_rng = random, None
+        else:
+            py_rng, np_rng = random.Random(self.tunnel_seed), np.random.RandomState(self.tunnel_seed)
+
         indices = np.arange(total_size)
-        random.shuffle(indices)
+        py_rng.shuffle(indices)
         if valid_size > 0:  
             train_indices = indices[:train_size]
             valid_indices = indices[train_size:]
@@ -136,7 +152,7 @@ class ImageDataset:
         if tunnel_size > 0:
             
             train_targets = targets[train_indices]
-            tunnel_indices = stratified_sample(train_targets, tunnel_size)
+            tunnel_indices = stratified_sample(train_targets, tunnel_size, rng=np_rng)
             tunnel_indices = train_indices[tunnel_indices]
             tunnel_targets = targets[tunnel_indices]
             self.train_targets = train_targets
@@ -144,7 +160,7 @@ class ImageDataset:
         
         train_set = Subset(dataset, train_indices)
         validation_set = Subset(dataset, valid_indices)
-        tunnel_set = Subset(dataset, tunnel_indices)
+        tunnel_set = Subset(dataset if tunnel_source is None else tunnel_source, tunnel_indices)
 
         return train_set, validation_set, tunnel_set
     
@@ -284,19 +300,21 @@ class ImageDataset:
         
         elif self.name == 'imagenet100':
             transform_train = transforms.Compose([
-                transforms.Resize(256),
                 transforms.RandomResizedCrop(224),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
             ])
 
+            # images have different sizes: resize + center crop so that they can be batched
             transform_test = transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
                 transforms.ToTensor(),
                 transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
             ])
 
-            raw_ds = load_dataset("clane9/imagenet-100", cache_dir="./data/imagenet100'")
+            raw_ds = load_dataset("clane9/imagenet-100", cache_dir="./data/imagenet100")
             
             train_data = raw_ds['train']
             test_data = raw_ds['validation']
@@ -304,17 +322,42 @@ class ImageDataset:
             train_set = HFDatasetWrapper(train_data, transform=transform_train)
             test_set = HFDatasetWrapper(test_data, transform=transform_test)
 
+        if self.class_subset is not None:
+            train_set, test_set = self.__subset_classes(train_set, test_set)
+
         if self.name == 'imagenet100':
-            train_targets = train_data['label']
-            self.test_targets = test_data['label']
+            train_targets = np.array(train_data['label'])
+            self.test_targets = np.array(test_data['label'])
         else:
             # train_targets = [train_set[i][1] for i in range(len(train_set))]
             train_targets = np.array(train_set.targets)
             self.test_targets = np.array(test_set.targets)
 
-        train_set, validation_set, tunnel_set = self.__split_dataset(train_set, train_targets)
+        # copy of the training set with the (deterministic) test transform, used to evaluate on training data
+        self.train_eval_set = copy.copy(train_set)
+        self.train_eval_set.transform = test_set.transform
+
+        train_set, validation_set, tunnel_set = self.__split_dataset(
+            train_set, train_targets, tunnel_source=self.train_eval_set if self.tunnel_eval_transform else None)
+        self.train_indices = train_set.indices
         
         return train_set, validation_set, tunnel_set, test_set
+
+    def __subset_classes(self, train_set, test_set):
+        """Keep only `num_classes` classes (a prefix of a fixed random permutation, so subsets are nested) and relabel them 0..k-1."""
+        if not (hasattr(train_set, 'data') and hasattr(train_set, 'targets')):
+            raise AttributeError(f"Class subsets are not supported for dataset {self.name}")
+        total_classes = DATASET_CLASSES[self.name]
+        assert 2 <= self.num_classes <= total_classes, f"num_classes must be in [2, {total_classes}]"
+        perm = np.random.RandomState(self.class_subset_seed).permutation(total_classes)
+        self.classes_kept = np.sort(perm[:self.num_classes])
+        remap = {int(c): i for i, c in enumerate(self.classes_kept)}
+        for ds in (train_set, test_set):
+            targets = np.array(ds.targets)
+            keep = np.isin(targets, self.classes_kept)
+            ds.data = ds.data[keep]
+            ds.targets = [remap[int(t)] for t in targets[keep]]
+        return train_set, test_set
 
     def __make_loader(self, dataset, targets, batch_size, stratified_batch, num_workers=1, shuffle=True):
         
@@ -328,6 +371,10 @@ class ImageDataset:
         else:
             return DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, shuffle=shuffle)
         
+    def return_train_eval_loader(self, batch_size, num_workers):
+        """Training examples (same subset used for training) with the test transform, not shuffled."""
+        return DataLoader(Subset(self.train_eval_set, self.train_indices), batch_size=batch_size, num_workers=num_workers, shuffle=False)
+
     def return_loaders(self, batch_size, num_workers, stratified_sampler):
         train_loader = self.__make_loader(self.train_set, self.train_targets, batch_size, stratified_sampler, num_workers, shuffle=True)
         # valid_loader = self.__make_loader(self.valid_set, self.valid_targets, batch_size, stratified_sampler, num_workers, shuffle=True)

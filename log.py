@@ -116,10 +116,18 @@ def initialize_logger_from_config(config: dict, checkpoint: bool) -> Union[Logge
     else:
         results_directory = f"./{config['optimizer']['name']}_checkpoints/"
 
-    run_path = config["dataset"]["name"] + "/" + str(config["model"]["type"]) + "/" + str(config["settings"]["seed"]) + "/"
+    # optional settings.run_tag keeps the outputs of different experiment families in separate folders
+    dataset_dir = config["dataset"]["name"]
+    if config["dataset"].get("num_classes") is not None:
+        dataset_dir += f"_c{config['dataset']['num_classes']}"
+    if config["dataset"].get("tunnel_seed") is not None:
+        dataset_dir += f"_t{config['dataset']['tunnel_seed']}"
+    run_tag = config["settings"].get("run_tag")
+    run_path = (run_tag + "/" if run_tag else "") + dataset_dir + "/" + str(config["model"]["type"]) + "/" + str(config["settings"]["seed"]) + "/"
     results_directory = results_directory + run_path
     logs_directory = logs_directory + run_path
     log_metrics_directory = './log_metrics/' + run_path
+    results_json_directory = './results/' + run_path
     
 
     os.makedirs(logs_directory, exist_ok=True)
@@ -139,6 +147,9 @@ def initialize_logger_from_config(config: dict, checkpoint: bool) -> Union[Logge
         }
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         
-        return WandbLogger(name=name, logs_directory=logs_directory, results_directory=results_directory, log_metrics_directory=log_metrics_directory, **kwargs)
+        logger = WandbLogger(name=name, logs_directory=logs_directory, results_directory=results_directory, log_metrics_directory=log_metrics_directory, **kwargs)
     else:
-        return Logger(name=name, logs_directory=logs_directory, results_directory=results_directory, log_metrics_directory=log_metrics_directory)
+        logger = Logger(name=name, logs_directory=logs_directory, results_directory=results_directory, log_metrics_directory=log_metrics_directory)
+    logger.run_path = run_path
+    logger.results_json = os.path.join(results_json_directory, f"{name}.json")
+    return logger

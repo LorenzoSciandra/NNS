@@ -5,17 +5,43 @@ from nc.ddn_modules import ClosestETFGeometryLayer, FeaturesMovingAverageLayer
 from models.resnet import resnet_set
 from models.mlp import mlp_set
 from models.vgg import vgg_set
-from dataset import DATASET_CLASSES, DATASET_FEATURES, DATASET_NUM_CHANNELS, DATASET_FLATTEN_FEATURES
+from dataset import DATASET_CLASSES, DATASET_FEATURES, DATASET_NUM_CHANNELS, DATASET_FLATTEN_FEATURES, DATASET_IMG_SIZE
+
+# Tunnel arguments used when no tunnel configuration is given (plain training of the full model)
+DEFAULT_TUNNEL_ARGS = {
+    "name": "training",
+    "enable_tunnel": False,
+    "tunnel_epochs": 0,
+    "alpha": 0,
+    "split_layer": 0,
+    "ETF_fc": False,
+    "declarative_ETF": False,
+    "inference": False,
+    "temperature": 5,
+    "fixed_etf_layers": 0,
+    "normalize": False,
+    "bias": False,
+    "pool": False}
+
+# ResNet stem used for each dataset (see models/resnet.py). The large-input stem is selected by
+# dataset (i.e. input resolution) and not by number of classes, so that CIFAR-100 keeps the 3x3 stem.
+RESNET_STEM = {
+    "cub": "cub",
+    "imagenet100": "imagenet",
+}
 
 
-def return_layer_list(model_type:str = "resnet10", dataset:str = 'cifar10', batch_norm: bool = False) -> list:
+def return_layer_list(model_type:str = "resnet10", dataset:str = 'cifar10', batch_norm: bool = False, num_classes: int = None) -> list:
     
+    if num_classes is None:
+        num_classes = DATASET_CLASSES[dataset]
+
     if model_type.startswith('mlp'):
-        return mlp_set(DATASET_CLASSES[dataset], DATASET_FEATURES[dataset], num_layers=int(model_type.split('_')[-1]))
+        return mlp_set(num_classes, DATASET_FEATURES[dataset], num_layers=int(model_type.split('_')[-1]))
     elif 'resnet' in model_type:
-        return resnet_set(model_type, DATASET_CLASSES[dataset], DATASET_NUM_CHANNELS[dataset])
+        return resnet_set(model_type, num_classes, DATASET_NUM_CHANNELS[dataset], stem=RESNET_STEM.get(dataset, "cifar"))
     elif 'vgg' in model_type:
-        return vgg_set(model_type, DATASET_CLASSES[dataset], batch_norm, DATASET_NUM_CHANNELS[dataset])
+        return vgg_set(model_type, num_classes, batch_norm, DATASET_NUM_CHANNELS[dataset], img_size=DATASET_IMG_SIZE[dataset])
         
     else:
         raise AttributeError("Set of layers not available")
@@ -30,11 +56,13 @@ class Extractor(nn.Module):
         self.init_weights()
         self.all_embs = {}
         self.all_flatten_dims = {}
+        self.all_shapes = {}
         self.num_classes = num_classes
         self.save = False
         self.trimmed = False
         self.normalize = False
         self.tau = None
+        self.feature_hook = None  # optional callable(layer_idx, flat_features), used for streaming metrics
 
     
     def reset_embs(self):
@@ -69,7 +97,11 @@ class Extractor(nn.Module):
                 else:
                     self.all_embs[unique_id] = x.reshape(x.size(0), -1)
 
+            if self.feature_hook is not None:
+                self.feature_hook(i, x.reshape(x.size(0), -1))
+
             self.all_flatten_dims[i] = x[0].numel()
+            self.all_shapes[i] = tuple(x[0].shape)
 
             if i == self.num_layers - 2 and self.normalize:
                 x = self.tau * F.normalize(x, dim=1)
@@ -77,7 +109,7 @@ class Extractor(nn.Module):
         return x
 
 
-    def trim_net(self, layer, declarative_ETF=False):
+    def trim_net(self, layer, declarative_ETF=False, pool=False):
        
         if layer < 0 or layer >= self.num_layers:
             raise ValueError("Layer index out of bounds.")
@@ -85,6 +117,12 @@ class Extractor(nn.Module):
         self.net = nn.Sequential(*self.net[:layer])
         self.num_layers = layer
         self.trimmed = True
+
+        # global average pooling before the head (NNS_AVG): the representation has one feature per channel
+        if pool and len(self.all_shapes[layer-1]) == 3:
+            self.net.append(nn.AdaptiveAvgPool2d((1, 1)))
+            self.num_layers += 1
+            self.all_flatten_dims[layer-1] = self.all_shapes[layer-1][0]
         
         if not isinstance(self.net[-1], nn.Flatten):
             self.net.append(nn.Flatten())
@@ -134,6 +172,7 @@ class Tunnel(nn.Module):
         self.bias = kwargs['bias']
         self.inference = kwargs['inference']
         self.fixed_etf_layers = kwargs['fixed_etf_layers']
+        self.pool = kwargs.get('pool', False)
         self.device = device
         self.all_embs = {}
         if self.active:
@@ -270,7 +309,7 @@ class Wrapped_NN(torch.nn.Module):
     def activate_tunnel(self, split_point, num_classes, verbose=True):
         self.active_tunnel = True
         self.extractor.normalize = False
-        num_features = self.extractor.trim_net(split_point, self.tunnel.decl_ETF)
+        num_features = self.extractor.trim_net(split_point, self.tunnel.decl_ETF, self.tunnel.pool)
         self.tunnel.activate(num_features, num_classes, verbose)
         if self.tunnel.fixed_etf_layers>0:
             self.extractor.set_etf(self.tunnel.fixed_etf_layers)

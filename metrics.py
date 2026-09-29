@@ -161,7 +161,13 @@ def nc2_cosine_metric(mu_c_dict, mu_G):
 ########################################
 
 
-def numerical_rank(embs):
+def numerical_rank_legacy(embs):
+    """
+    Numerical rank as computed for the figures of the paper. Note: torch.linalg.eigh returns the
+    eigenvalues in ascending order, so the threshold is relative to the *smallest* eigenvalue of the
+    (uncentered, N x N) Gram matrix, and eigenvalues due to numerical noise are also counted:
+    the value can exceed the layer width. Kept only to reproduce/explain the old values.
+    """
     # embs = embs.to('cpu')
     eps = 1e-3
     embs = torch.nan_to_num(embs, nan=0.0, posinf=1e6, neginf=-1e6)
@@ -169,6 +175,20 @@ def numerical_rank(embs):
     threshold = L.real[0] * eps
     n_rank = torch.sum(L.real > threshold)
     return n_rank
+
+
+def numerical_rank(embs, eps=1e-3):
+    """
+    Numerical rank as in Masarczyk et al. (2023): number of eigenvalues of the sample covariance
+    matrix larger than eps times the largest one.
+    """
+    embs = torch.nan_to_num(embs, nan=0.0, posinf=1e6, neginf=-1e6).double()
+    centered = embs - embs.mean(dim=0, keepdim=True)
+    n, d = centered.shape
+    # the non-zero eigenvalues of X^T X / n and X X^T / n coincide: use the smaller matrix
+    gram = centered @ centered.T if n <= d else centered.T @ centered
+    L = torch.linalg.eigvalsh(gram / n)
+    return torch.sum(L > eps * L.max())
 
 
 def intra_class_var(mu_c_dict, features, targets):
@@ -356,6 +376,60 @@ def ncc_metric_stable(all_means, all_vars, eps=1e-12):
 
     return (var_sum / dist_sq).sum() / 2
 
+
+
+#########################################
+# STREAMING INVERSE FISHER CRITERION
+#########################################
+
+
+class StreamingIFC:
+    """
+    One-pass computation of the Inverse Fisher Criterion ('proxy_nc') of every layer, without storing
+    the embeddings: per class, it accumulates the sum of the features and of their squared norms.
+    Computes exactly the same quantity as intra_class_var / inter_class_var in process_metrics_layer.
+
+    Usage: for each batch, call set_targets(y) and then run the forward pass with
+    model.extractor.feature_hook = streaming_ifc.
+    """
+    def __init__(self, num_classes, device='cpu'):
+        self.num_classes = num_classes
+        self.device = device
+        self.counts = torch.zeros(num_classes, dtype=torch.float64, device=device)
+        self.sums = {}
+        self.sq_norms = {}
+        self.targets = None
+
+    def set_targets(self, targets):
+        self.targets = targets.to(self.device)
+        self.counts += torch.bincount(self.targets, minlength=self.num_classes).double()
+
+    def __call__(self, layer_idx, features):
+        x = features.detach().to(self.device, torch.float64)
+        if layer_idx not in self.sums:
+            self.sums[layer_idx] = torch.zeros((self.num_classes, x.shape[1]), dtype=torch.float64, device=self.device)
+            self.sq_norms[layer_idx] = torch.zeros(self.num_classes, dtype=torch.float64, device=self.device)
+        self.sums[layer_idx].index_add_(0, self.targets, x)
+        self.sq_norms[layer_idx].index_add_(0, self.targets, (x * x).sum(dim=1))
+
+    def compute(self):
+        K = self.num_classes
+        n = self.counts.clamp_min(1)
+        present = self.counts > 0
+        result = OrderedDict()
+        for layer_idx in sorted(self.sums):
+            means = self.sums[layer_idx] / n[:, None]
+            # mean squared distance from the class mean: E||h||^2 - ||mu_c||^2
+            var_c = (self.sq_norms[layer_idx] / n - (means * means).sum(dim=1)).clamp_min(0)
+            intra_var = var_c[present].sum() / K
+            # sum_{i != j} ||mu_i - mu_j||^2 = 2K sum_i ||mu_i||^2 - 2 ||sum_i mu_i||^2
+            inter_var = (2 * K * (means * means).sum() - 2 * (means.sum(dim=0) ** 2).sum()) / (K * (K - 1))
+            result[f"extr_{layer_idx}"] = {
+                'intra_class_var': intra_var.item(),
+                'inter_class_var': inter_var.item(),
+                'proxy_nc': (intra_var / (inter_var + 1e-8)).item(),
+            }
+        return result
 
 
 #########################################

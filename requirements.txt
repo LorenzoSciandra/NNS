@@ -14,3 +14,6 @@ torch_vision==0.1.6.dev0
 torchmetrics==1.6.0
 torchvision==0.20.1
 wandb==0.24.0
+datasets
+matplotlib
+ruamel.yaml

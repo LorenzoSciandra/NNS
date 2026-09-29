@@ -1,0 +1,21 @@
+settings:
+  device: cuda:0
+  seed: 2025
+  save_metrics: true
+  amp: true            # bf16 autocast
+logger:
+  type: terminal # wandb
+  wandb_args:
+    entity: your_wandb_entity
+    project: your_project_name
+    name: _baseline_resnet18_imagenet100_seed2025
+dataset:
+  name: imagenet100
+  frac_train: 1.0
+  frac_tunnel: 0.05
+  frac_valid: 0.0
+  tunnel_eval_transform: true   # tunnel set without random augmentation
+dataloader:
+  num_workers: 8
+  stratified_batch: false
+  batch_size: 256

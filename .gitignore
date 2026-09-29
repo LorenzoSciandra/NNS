@@ -4,4 +4,12 @@ logs/
 log_metrics/
 data/
 *_checkpoints/
-wandb/
+wandb/results/
+runs_logs/
+runs_cfg/
+tables_generated/
+figs/
+*_logs_checkpoint/
+grid_launch.log
+followup_launch.log
+imagenet_download.log

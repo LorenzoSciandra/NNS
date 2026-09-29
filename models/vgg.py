@@ -34,23 +34,17 @@ def make_vgg_layers(cfg: list, batch_norm: bool = False, in_channels: int = 3) -
             in_channels = v
     return layers
 
-def vgg_set(type: str = "vgg11", num_classes: int = 10, batch_norm: bool = True, num_channels: int = 3) -> list:
+def vgg_set(type: str = "vgg11", num_classes: int = 10, batch_norm: bool = True, num_channels: int = 3, img_size: int = 32) -> list:
     if type not in cfgs:
         raise ValueError(f"Unsupported VGG type '{type}'")
 
     features = make_vgg_layers(cfgs[type], batch_norm=batch_norm, in_channels=num_channels)
-    # print(features)
-    if num_classes in [100, 200]:  # for CUB-200-2011
-        classifier = [
-            nn.Sequential(*[nn.Flatten(), nn.Linear(512 * 7 * 7, 4096), nn.ReLU(True), nn.Dropout()]),
-            nn.Sequential(*[nn.Linear(4096, 4096), nn.ReLU(True), nn.Dropout()]),
-            nn.Linear(4096, num_classes)
-        ]
-    else:
-        classifier = [
-            nn.Sequential(*[nn.Flatten(), nn.Linear(512, 4096), nn.ReLU(True), nn.Dropout()]),
-            nn.Sequential(*[nn.Linear(4096, 4096), nn.ReLU(True), nn.Dropout()]),
-            nn.Linear(4096, num_classes)
-        ]
+    # five max-poolings: 32x32 inputs -> 512x1x1, 224x224 inputs (CUB, ImageNet) -> 512x7x7
+    flatten_dim = 512 * (img_size // 32) ** 2
+    classifier = [
+        nn.Sequential(*[nn.Flatten(), nn.Linear(flatten_dim, 4096), nn.ReLU(True), nn.Dropout()]),
+        nn.Sequential(*[nn.Linear(4096, 4096), nn.ReLU(True), nn.Dropout()]),
+        nn.Linear(4096, num_classes)
+    ]
 
     return features + classifier
